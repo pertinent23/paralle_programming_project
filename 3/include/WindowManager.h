@@ -10,6 +10,7 @@
 #include <Average.h>
 #include <Texture.h>
 #include <DoubleBuffer.h>
+#include <atomic>
 
 /**
  * @brief Manages the window operations.
@@ -67,7 +68,8 @@ private:
     Window window;    // The window.
     GC gc;            // The graphics context of the window.
 
-    unsigned int keysPressed; // The current state of the keys (which keys are pressed or not pressed).
+    // On rend cette variable atomique pour éviter les data races
+    std::atomic<unsigned int> keysPressed; // The current state of the keys (which keys are pressed or not pressed).
 
     /**
      * @brief Converts a KeySym to one of the bit masks.

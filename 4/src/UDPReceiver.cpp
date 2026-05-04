@@ -32,7 +32,11 @@ UDPReceiver::~UDPReceiver()
 UDPData UDPReceiver::receive()
 {
     socklen_t len = sizeof(addr);
-    int read = recvfrom(sockfd, buffer, bufferSize, MSG_DONTWAIT, (sockaddr *)&addr, &len);
+    
+    // On remplace MSG_DONTWAIT par 0 (ou MSG_WAITALL).
+    // Le socket devient bloquant, mais grâce au SO_RCVTIMEO du constructeur, 
+    // il se réveillera automatiquement au bout de 100ms si rien ne se passe.
+    int read = recvfrom(sockfd, buffer, bufferSize, 0, (sockaddr *)&addr, &len);
 
     if (read != bufferSize)
         return {false, "", {0, 0}};

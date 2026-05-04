@@ -1,3 +1,7 @@
+#include <X11/Xlib.h>
+#include <thread>
+#include <mutex>
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <map>
@@ -41,6 +45,7 @@ ProgramArguments parseArgs(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+    XInitThreads();
     ProgramArguments args = parseArgs(argc, argv);
     const int screenWidth = args.screenWidth;
     const int screenHeight = args.screenHeight;
@@ -66,6 +71,56 @@ int main(int argc, char *argv[])
 
     Average fpsCounter(1.0);
 
+    std::mutex displayMutex;           // Protégera l'accès au DoubleBuffer
+    std::atomic<bool> isRunning(true); // Permettra d'arrêter le thread proprement
+    // Mutex pour protéger les modifications de la carte (positions des joueurs)
+    std::mutex mapMutex;
+
+    // Création du Thread dédié à l'interface graphique
+    std::thread guiThread([&]() {
+        while (isRunning)
+        {
+            // On verrouille le mutex UNIQUEMENT pendant la copie de l'image
+            {
+                std::lock_guard<std::mutex> lock(displayMutex);
+                windowManager.updateDisplay();
+            }
+            
+            // X11 traite les événements clavier (pas besoin du mutex pour ça)
+            windowManager.updateInput();
+
+            // On endort le thread ~16ms pour limiter les FPS de l'affichage à ~60
+            // Cela évite que le thread ne consomme 100% d'un coeur CPU pour rien.
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+    });
+
+    // Création du Thread dédié à la réception réseau
+    std::thread receiverThread([&]() {
+        while (isRunning)
+        {
+            // Le thread va s'endormir ici. 
+            // Il se réveille soit avec un paquet, soit après 100ms.
+            UDPData data = udpReceiver.receive(); 
+            
+            if (data.valid)
+            {
+                // On verrouille la carte uniquement quand on la modifie
+                std::lock_guard<std::mutex> lock(mapMutex);
+                
+                if (playersIndexes.find(data.sender) == playersIndexes.end())
+                {
+                    playersIndexes[data.sender] = nextPlayerIndex++;
+                    nextPlayerIndex %= nbPlayers;
+                }
+                int index = playersIndexes[data.sender];
+                map.movePlayer(index, data.position.x(), data.position.y());
+            }
+        }
+    });
+
+    auto previousTime = std::chrono::high_resolution_clock::now();
+
     while (true)
     {
         raycaster.castFloorCeiling();
@@ -81,9 +136,6 @@ int main(int argc, char *argv[])
 
         fpsCounter.update(1.0 / frameTime);
         std::cout << "\r" << std::to_string(int(fpsCounter.get())) << " FPS" << std::flush;
-
-        windowManager.updateDisplay();
-        windowManager.updateInput();
 
         unsigned int keys = windowManager.getKeysPressed();
         if (keys & WindowManager::KEY_UP)
@@ -101,20 +153,34 @@ int main(int argc, char *argv[])
         for (auto &udpSender : udpSenders)
             udpSender->send(player.posX(), player.posY());
 
-        // Receive other players' positions and update them
-        for (size_t i = 0; i < nbPlayers; i++)
+        raycaster.castFloorCeiling();
+        raycaster.castWalls();
+
+        // On protège la lecture des sprites
+        // car le receiverThread pourrait modifier un joueur au même moment.
         {
-            UDPData data = udpReceiver.receive();
-            if (!data.valid)
-                break;
-            // Update the player's index if it is the first time we receive data from them
-            if (playersIndexes.find(data.sender) == playersIndexes.end())
-            {
-                playersIndexes[data.sender] = nextPlayerIndex++;
-                nextPlayerIndex %= nbPlayers;
-            }
-            int index = playersIndexes[data.sender];
-            map.movePlayer(index, data.position.x(), data.position.y());
+            std::lock_guard<std::mutex> lock(mapMutex);
+            raycaster.castSprites();
+        }
+
+        // On verrouille le Mutex avant d'échanger les buffers
+        // pour être certain que le guiThread n'est pas en train de lire le back buffer.
+        {
+            std::lock_guard<std::mutex> lock(displayMutex);
+            doubleBuffer.swap();
         }
     }
+
+    isRunning = false;
+    
+    // On attend que le thread GUI ait terminé proprement avant de quitter le programme
+    if (guiThread.joinable()) {
+        guiThread.join();
+    }
+
+    if(receiverThread.joinable()) {
+        receiverThread.join();
+    }
+
+    return 0;
 }

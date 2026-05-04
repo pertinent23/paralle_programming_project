@@ -8,7 +8,7 @@ SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRC_FILES))
 EXECUTABLE := raycasting
 
-CXXFLAGS := -std=c++11 -I$(INCLUDE_DIR) -Wall -W -O3 -fopenmp
+CXXFLAGS := -std=c++11 -I$(INCLUDE_DIR) -Wall -W -O3 -fopenmp -pthread
 
 LDFLAGS := -lX11 -fopenmp
 
