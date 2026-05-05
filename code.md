@@ -1,0 +1,1 @@
+./raycasting  800 600 ./ips1.txt
